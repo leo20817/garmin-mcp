@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.zeabur.app/template.json",
+  "name": "Garmin MCP Server",
+  "description": "Garmin Connect MCP Server with SQLite storage",
+  "template": "DOCKERFILE",
+  "ports": [8000],
+  "env": {
+    "GARMIN_EMAIL": {
+      "description": "Garmin Connect email",
+      "required": true
+    },
+    "GARMIN_PASSWORD": {
+      "description": "Garmin Connect password",
+      "required": true
+    }
+  }
+}
