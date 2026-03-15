@@ -300,12 +300,17 @@ def get_health_trends(days: int = 14) -> str:
 
 
 def start_scheduler():
+    from datetime import datetime, timedelta as td
     scheduler = BackgroundScheduler()
     scheduler.add_job(sync_garmin_data, "interval", minutes=30, id="garmin_sync")
-    # Run initial sync immediately
-    scheduler.add_job(sync_garmin_data, "date", id="garmin_sync_initial")
+    # Delay initial sync by 10s so the server can pass health checks first
+    scheduler.add_job(
+        sync_garmin_data, "date",
+        run_date=datetime.now() + td(seconds=10),
+        id="garmin_sync_initial",
+    )
     scheduler.start()
-    logger.info("Scheduler started: syncing every 30 minutes")
+    logger.info("Scheduler started: initial sync in 10s, then every 30 minutes")
 
 
 if __name__ == "__main__":
@@ -316,17 +321,22 @@ if __name__ == "__main__":
     from starlette.responses import JSONResponse
     from starlette.routing import Route, Mount
 
-    # Validate env vars before starting
+    # Warn if env vars missing but don't crash — server can still start
     if not os.environ.get("GARMIN_EMAIL") or not os.environ.get("GARMIN_PASSWORD"):
-        logger.error("GARMIN_EMAIL and GARMIN_PASSWORD environment variables are required")
-        sys.exit(1)
+        logger.warning("GARMIN_EMAIL and/or GARMIN_PASSWORD not set — Garmin sync will be disabled")
+    else:
+        logger.info("Garmin credentials found")
 
     logger.info("Initializing database...")
     init_db()
     logger.info("Database initialized")
 
-    logger.info("Starting scheduler...")
-    start_scheduler()
+    # Only start scheduler if credentials are available
+    if os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD"):
+        logger.info("Starting scheduler...")
+        start_scheduler()
+    else:
+        logger.warning("Scheduler not started — no Garmin credentials")
 
     # Build the MCP SSE app and wrap it with a health check
     mcp_app = mcp.sse_app()

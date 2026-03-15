@@ -3,7 +3,8 @@ import json
 from datetime import datetime, date
 
 
-DB_PATH = "garmin_data.db"
+import os
+DB_PATH = os.environ.get("DB_PATH", "/tmp/garmin_data.db")
 
 
 def get_conn() -> sqlite3.Connection:
