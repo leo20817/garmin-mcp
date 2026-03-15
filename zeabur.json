@@ -3,7 +3,7 @@
   "name": "Garmin MCP Server",
   "description": "Garmin Connect MCP Server with SQLite storage",
   "template": "DOCKERFILE",
-  "ports": [8000],
+  "ports": [8080],
   "env": {
     "GARMIN_EMAIL": {
       "description": "Garmin Connect email",

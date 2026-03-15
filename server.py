@@ -22,7 +22,9 @@ from garmin_client import sync_garmin_data
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("Garmin Health MCP Server", host="0.0.0.0", port=8000)
+import os as _os
+_port = int(_os.environ.get("PORT", "8080"))
+mcp = FastMCP("Garmin Health MCP Server", host="0.0.0.0", port=_port)
 
 
 def _extract_sleep_score(daily_sleep: dict) -> int | None:
@@ -322,5 +324,5 @@ if __name__ == "__main__":
     logger.info("Starting scheduler...")
     start_scheduler()
 
-    logger.info("Starting MCP server on 0.0.0.0:8000...")
+    logger.info(f"Starting MCP server on 0.0.0.0:{_port}...")
     mcp.run(transport="sse")
