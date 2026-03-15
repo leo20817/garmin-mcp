@@ -311,6 +311,10 @@ def start_scheduler():
 if __name__ == "__main__":
     import os
     import sys
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route, Mount
 
     # Validate env vars before starting
     if not os.environ.get("GARMIN_EMAIL") or not os.environ.get("GARMIN_PASSWORD"):
@@ -324,5 +328,19 @@ if __name__ == "__main__":
     logger.info("Starting scheduler...")
     start_scheduler()
 
+    # Build the MCP SSE app and wrap it with a health check
+    mcp_app = mcp.sse_app()
+
+    async def health(request):
+        return JSONResponse({"status": "ok"})
+
+    app = Starlette(
+        routes=[
+            Route("/health", health),
+            Route("/", health),
+            Mount("/", app=mcp_app),
+        ],
+    )
+
     logger.info(f"Starting MCP server on 0.0.0.0:{_port}...")
-    mcp.run(transport="sse")
+    uvicorn.run(app, host="0.0.0.0", port=_port)
