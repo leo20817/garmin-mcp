@@ -307,6 +307,20 @@ def start_scheduler():
 
 
 if __name__ == "__main__":
+    import os
+    import sys
+
+    # Validate env vars before starting
+    if not os.environ.get("GARMIN_EMAIL") or not os.environ.get("GARMIN_PASSWORD"):
+        logger.error("GARMIN_EMAIL and GARMIN_PASSWORD environment variables are required")
+        sys.exit(1)
+
+    logger.info("Initializing database...")
     init_db()
+    logger.info("Database initialized")
+
+    logger.info("Starting scheduler...")
     start_scheduler()
+
+    logger.info("Starting MCP server on 0.0.0.0:8000...")
     mcp.run(transport="sse")

@@ -20,8 +20,10 @@ _client: Garmin | None = None
 def get_client() -> Garmin:
     global _client
     if _client is None:
-        email = os.environ["GARMIN_EMAIL"]
-        password = os.environ["GARMIN_PASSWORD"]
+        email = os.environ.get("GARMIN_EMAIL")
+        password = os.environ.get("GARMIN_PASSWORD")
+        if not email or not password:
+            raise RuntimeError("GARMIN_EMAIL and GARMIN_PASSWORD environment variables are required")
         _client = Garmin(email, password)
         _client.login()
         logger.info("Garmin Connect login successful")
