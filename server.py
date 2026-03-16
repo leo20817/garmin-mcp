@@ -318,6 +318,8 @@ if __name__ == "__main__":
     import sys
     import uvicorn
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
     from starlette.responses import JSONResponse
     from starlette.routing import Route, Mount
 
@@ -347,8 +349,15 @@ if __name__ == "__main__":
     app = Starlette(
         routes=[
             Route("/health", health),
-            Route("/", health),
             Mount("/", app=mcp_app),
+        ],
+        middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_methods=["*"],
+                allow_headers=["*"],
+            ),
         ],
     )
 
