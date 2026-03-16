@@ -349,6 +349,7 @@ if __name__ == "__main__":
     app = Starlette(
         routes=[
             Route("/health", health),
+            Route("/", health),
             Mount("/", app=mcp_app),
         ],
         middleware=[
