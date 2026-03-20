@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN mkdir -p /tmp/garmin_tokens
+
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8080
