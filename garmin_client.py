@@ -17,9 +17,12 @@ logger = logging.getLogger(__name__)
 
 _client: Garmin | None = None
 _last_login_attempt: float = 0  # epoch timestamp of last login attempt
-_LOGIN_COOLDOWN = 120  # seconds — avoid hammering Garmin OAuth
+_LOGIN_COOLDOWN = 300  # 5 minutes — Garmin rate limits are strict
 
 TOKEN_DIR = os.environ.get("TOKEN_DIR", "/tmp/garmin_tokens")
+
+# Delay between each API call to avoid triggering rate limits
+API_CALL_DELAY = 2  # seconds
 
 
 def get_client() -> Garmin:
@@ -40,7 +43,7 @@ def _login() -> Garmin:
 
     client = Garmin(email, password)
 
-    # Try loading saved tokens first (avoids hitting OAuth endpoint)
+    # Try loading saved tokens first (avoids hitting OAuth endpoint entirely)
     try:
         client.garth.load(TOKEN_DIR)
         client.display_name = client.garth.profile["displayName"]
@@ -56,23 +59,26 @@ def _login() -> Garmin:
     if elapsed < _LOGIN_COOLDOWN:
         wait = _LOGIN_COOLDOWN - elapsed
         raise RuntimeError(
-            f"Login cooldown active — last login attempt was {elapsed:.0f}s ago, "
-            f"need to wait {wait:.0f}s more. This prevents Garmin 429 rate limits."
+            f"Login cooldown active — last attempt {elapsed:.0f}s ago, "
+            f"wait {wait:.0f}s more to avoid Garmin 429."
         )
 
     _last_login_attempt = time.time()
     client.login()
     logger.info("Garmin Connect: full login successful")
 
-    # Persist tokens for future use
+    _save_tokens(client)
+    return client
+
+
+def _save_tokens(client: Garmin):
+    """Persist garth tokens to disk."""
     try:
         os.makedirs(TOKEN_DIR, exist_ok=True)
         client.garth.dump(TOKEN_DIR)
         logger.info(f"Garmin tokens saved to {TOKEN_DIR}")
     except Exception as e:
         logger.warning(f"Failed to save tokens: {e}")
-
-    return client
 
 
 def reconnect() -> Garmin:
@@ -84,7 +90,8 @@ def reconnect() -> Garmin:
 
 def _is_rate_limit_error(e: Exception) -> bool:
     """Check if an exception is a Garmin 429 rate limit error."""
-    return "429" in str(e) or "Too Many Requests" in str(e)
+    msg = str(e)
+    return "429" in msg or "Too Many Requests" in msg
 
 
 def _safe_api_call(client: Garmin, func_name: str, *args, **kwargs):
@@ -95,10 +102,11 @@ def _safe_api_call(client: Garmin, func_name: str, *args, **kwargs):
     """
     method = getattr(client, func_name)
     try:
-        return method(*args, **kwargs), client
+        result = method(*args, **kwargs)
+        return result, client
     except Exception as e:
         if _is_rate_limit_error(e):
-            raise  # bubble up — caller should stop sync
+            raise  # bubble up — caller should stop sync entirely
         # Likely session expired — try reconnect once
         logger.warning(f"API call {func_name} failed: {e}, attempting reconnect...")
         try:
@@ -106,6 +114,8 @@ def _safe_api_call(client: Garmin, func_name: str, *args, **kwargs):
         except Exception as re:
             logger.error(f"Reconnect failed: {re}")
             raise
+        # Save new tokens immediately after reconnect
+        _save_tokens(client)
         # Retry the call with fresh client
         method = getattr(client, func_name)
         return method(*args, **kwargs), client
@@ -117,20 +127,30 @@ def sync_garmin_data():
 
     try:
         client = get_client()
-    except Exception:
-        logger.warning("Initial get_client failed, attempting reconnect...")
+    except Exception as e:
+        logger.warning(f"get_client failed: {e}")
+        # If cooldown is active, skip this sync entirely
+        if "cooldown" in str(e).lower():
+            log_sync("skipped", f"Login cooldown active, will retry next cycle")
+            logger.info("Skipping sync — login cooldown active")
+            return
         try:
             client = reconnect()
-        except Exception as e:
-            log_sync("error", str(e))
-            logger.error(f"Failed to connect to Garmin: {e}")
+        except Exception as e2:
+            log_sync("error", str(e2))
+            logger.error(f"Failed to connect to Garmin: {e2}")
             return
 
     today = date.today()
-    sync_days = 7
+    # Only sync last 2 days for frequent syncs — reduces API calls from ~42 to ~12
+    sync_days = 2
     success_count = 0
     fail_count = 0
     rate_limited = False
+
+    def _throttle():
+        """Sleep between API calls to avoid rate limits."""
+        time.sleep(API_CALL_DELAY)
 
     # Daily summaries
     for i in range(sync_days):
@@ -142,24 +162,26 @@ def sync_garmin_data():
             if stats:
                 upsert_daily_summary(dt_str, stats)
                 success_count += 1
+            _throttle()
         except Exception as e:
             if _is_rate_limit_error(e):
-                logger.error(f"Rate limited on daily summary — stopping sync to avoid further 429s")
+                logger.error(f"Rate limited on daily summary — stopping sync")
                 rate_limited = True
             else:
                 logger.warning(f"Failed to get daily summary for {dt_str}: {e}")
                 fail_count += 1
 
-    # Activities
+    # Activities (single call, not per-day)
     if not rate_limited:
         try:
-            activities, client = _safe_api_call(client, "get_activities", 0, sync_days * 5)
+            activities, client = _safe_api_call(client, "get_activities", 0, 10)
             for act in activities:
                 activity_id = act.get("activityId")
                 act_date = act.get("startTimeLocal", today.isoformat())[:10]
                 if activity_id:
                     upsert_activity(activity_id, act_date, act)
                     success_count += 1
+            _throttle()
         except Exception as e:
             if _is_rate_limit_error(e):
                 logger.error(f"Rate limited on activities — stopping sync")
@@ -178,6 +200,7 @@ def sync_garmin_data():
             if sleep_data:
                 upsert_sleep(dt_str, sleep_data)
                 success_count += 1
+            _throttle()
         except Exception as e:
             if _is_rate_limit_error(e):
                 logger.error(f"Rate limited on sleep — stopping sync")
@@ -196,6 +219,7 @@ def sync_garmin_data():
             if hrv_data:
                 upsert_hrv(dt_str, hrv_data)
                 success_count += 1
+            _throttle()
         except Exception as e:
             if _is_rate_limit_error(e):
                 logger.error(f"Rate limited on HRV — stopping sync")
@@ -219,6 +243,7 @@ def sync_garmin_data():
                 else:
                     upsert_body_battery(dt_str, bb_data)
                 success_count += 1
+            _throttle()
         except Exception as e:
             if _is_rate_limit_error(e):
                 logger.error(f"Rate limited on body battery — stopping sync")
@@ -243,6 +268,7 @@ def sync_garmin_data():
                 elif isinstance(tr_data, dict):
                     upsert_training_readiness(dt_str, tr_data)
                 success_count += 1
+            _throttle()
         except Exception as e:
             if _is_rate_limit_error(e):
                 logger.error(f"Rate limited on training readiness — stopping sync")
@@ -251,13 +277,9 @@ def sync_garmin_data():
                 logger.warning(f"Failed to get training readiness for {dt_str}: {e}")
                 fail_count += 1
 
-    # Save tokens after successful API usage (refreshes token expiry)
+    # Save tokens after successful sync
     if success_count > 0:
-        try:
-            os.makedirs(TOKEN_DIR, exist_ok=True)
-            client.garth.dump(TOKEN_DIR)
-        except Exception:
-            pass
+        _save_tokens(client)
 
     # Accurate sync status logging
     if rate_limited:

@@ -302,15 +302,17 @@ def get_health_trends(days: int = 14) -> str:
 def start_scheduler():
     from datetime import datetime, timedelta as td
     scheduler = BackgroundScheduler()
-    scheduler.add_job(sync_garmin_data, "interval", minutes=30, id="garmin_sync")
-    # Delay initial sync by 10s so the server can pass health checks first
+    # Sync every 60 minutes instead of 30 — reduces OAuth token refresh pressure
+    scheduler.add_job(sync_garmin_data, "interval", minutes=60, id="garmin_sync")
+    # Delay initial sync by 30s so the server can pass health checks
+    # and avoid immediate rate limit issues on cold start
     scheduler.add_job(
         sync_garmin_data, "date",
-        run_date=datetime.now() + td(seconds=10),
+        run_date=datetime.now() + td(seconds=30),
         id="garmin_sync_initial",
     )
     scheduler.start()
-    logger.info("Scheduler started: initial sync in 10s, then every 30 minutes")
+    logger.info("Scheduler started: initial sync in 30s, then every 60 minutes")
 
 
 if __name__ == "__main__":
